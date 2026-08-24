@@ -73,11 +73,13 @@ class Base(unittest.TestCase):
         if self.real_home:
             os.environ['HOME'] = self.real_home
 
-    def run_apply(self, migrate, dry_run=False):
+    def run_apply(self, migrate, dry_run=False, dst_account=None, dst_org=None):
         class Args:
             pass
         args = Args()
         args.dry_run = dry_run
+        if dst_account or dst_org:
+            args.dst_account, args.dst_org = dst_account, dst_org
         return migrate.cmd_apply(args)
 
 
@@ -155,6 +157,22 @@ class TestRecordAndApply(Base):
 
 class TestRefusals(Base):
     """Negative controls: each guard must actually refuse."""
+
+    def test_refuses_a_truncated_uuid_override(self):
+        """A short prefix would create directories the app never reads."""
+        migrate = build_home(self.root, signed_in=OLD)
+        migrate.cmd_record(None)
+        with self.assertRaises(migrate.Abort) as caught:
+            self.run_apply(migrate, dst_account=NEW[0][:8], dst_org=NEW[1][:8])
+        self.assertIn('not a full UUID', str(caught.exception))
+        self.assertFalse(os.path.isdir(
+            os.path.join(migrate.APP_SUPPORT, 'claude-code-sessions', NEW[0][:8])))
+
+    def test_accepts_a_full_uuid_override(self):
+        migrate = build_home(self.root, signed_in=OLD)
+        migrate.cmd_record(None)
+        self.assertEqual(self.run_apply(migrate, dst_account=NEW[0], dst_org=NEW[1]), 0)
+        self.assertTrue(os.path.isdir(migrate.store_dir('claude-code-sessions', *NEW)))
 
     def test_refuses_when_source_equals_destination(self):
         migrate = build_home(self.root, signed_in=OLD)

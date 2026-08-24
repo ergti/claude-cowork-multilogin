@@ -23,6 +23,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,10 @@ STATE_FILE = os.path.join(STATE_DIR, 'previous-account.json')
 BACKUP_DIR = os.path.join(STATE_DIR, 'backups')
 STORES = ('claude-code-sessions', 'local-agent-mode-sessions')
 GROUP_SCOPES_KEY = 'dframe-group-scopes'
+
+
+UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+                     r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
 
 
 class Abort(Exception):
@@ -227,7 +232,11 @@ def copy_cards(store, src, dst, dry_run):
             skipped += 1
             continue
         if not dry_run:
-            shutil.copy2(os.path.join(src_dir, name), os.path.join(dst_dir, name))
+            s, d = os.path.join(src_dir, name), os.path.join(dst_dir, name)
+            if os.path.isdir(s):
+                shutil.copytree(s, d)
+            else:
+                shutil.copy2(s, d)
         copied += 1
     # scheduled tasks: only when the destination has none of its own
     src_tasks = os.path.join(src_dir, 'scheduled-tasks.json')
@@ -286,7 +295,19 @@ def cmd_apply(args):
     with open(STATE_FILE) as fh:
         previous = json.load(fh)
     src = (previous['accountUuid'], previous['organizationUuid'])
-    dst_account, dst_org, dst_email = signed_in_account()
+    override_account = getattr(args, 'dst_account', None)
+    override_org = getattr(args, 'dst_org', None)
+    if override_account and override_org:
+        for label, value in (('--dst-account', override_account), ('--dst-org', override_org)):
+            if not UUID_RE.match(value):
+                raise Abort(f'{label}={value} is not a full UUID.\n'
+                            'Pass the whole 36-character value, hyphens included. '
+                            'A short prefix silently creates directories the app '
+                            'never reads.\n'
+                            'Run "migrate.py status" to see the full UUIDs.')
+        dst_account, dst_org, dst_email = override_account, override_org, '(manual override)'
+    else:
+        dst_account, dst_org, dst_email = signed_in_account()
     dst = (dst_account, dst_org)
 
     print(f'SOURCE      {previous.get("email", "?")}  ({short(src[0])}/{short(src[1])})')
@@ -357,6 +378,8 @@ def main(argv=None):
     apply_parser = sub.add_parser('apply', help='after switching, with the app quit')
     apply_parser.add_argument('--dry-run', action='store_true',
                               help='report what would happen, change nothing')
+    apply_parser.add_argument('--dst-account', help='override destination account uuid')
+    apply_parser.add_argument('--dst-org', help='override destination org uuid')
     sub.add_parser('status', help='show accounts found on this machine')
     args = parser.parse_args(argv)
     handlers = {'record': cmd_record, 'apply': cmd_apply, 'status': cmd_status}
