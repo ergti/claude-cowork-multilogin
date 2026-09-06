@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .DS_Store
 .venv/
+
+# Segredos de ambiente (varredura de seguranca 2026-09-05)
+.env
+.env.*
+!.env.example
